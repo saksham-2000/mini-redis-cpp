@@ -1,5 +1,18 @@
+# Build artifacts
+build/
+my_redis_server
 MyRedisCLI
 
+# Runtime state
 dump.my_rdb
 
-build
+# My private scratchpad (don't commit)
+explain.md
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+*.swp

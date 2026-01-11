@@ -1,28 +1,28 @@
-# Concepts&UseCases
+# Design notes, per-command use cases, and test recipes
+
+These are the notes I kept for myself while building `my_redis_server`. They cover the concepts I had to learn, a realistic use case for every command, and a set of manual tests you can copy into `redis-cli` to exercise the whole surface area.
 
 ---
 
-## Concepts
+## Concepts this project forced me to actually understand
 
-1. TCP/IP  and Socket Programming
-2. Concurrency and Multithreading
-3. Mutex and Sync..
-4. Data Structures -> Hash Tables, Vectors
-5. Parsing and RESP protocol 
-6. File I/O Presitance
-7. Signal Handling
-8. Command Processing and Response Formatting 
-9. Singleton Pattern 
-10. Bitwise Opretors '|=' 
-11. std libraries
+1. **TCP / IP and socket programming** — `socket`, `bind`, `listen`, `accept`, `recv`, `send`, `SO_REUSEADDR`.
+2. **Concurrency and multithreading** — `std::thread`, detached vs. joined threads, thread-per-connection vs. event loops.
+3. **Synchronization** — `std::mutex`, `std::lock_guard`, the critical-section-is-the-whole-function pattern, and when coarse-grained locking is correct.
+4. **Data structures** — `std::unordered_map`, `std::vector`, reverse iterators for LREM's negative-count path.
+5. **Parsing a wire protocol** — RESP is length-prefixed, line-oriented, and unforgiving about CRLFs.
+6. **File I/O for persistence** — `std::ofstream` / `std::ifstream`, the dump-and-reload pattern, and why a text format is a trap for keys with spaces.
+7. **Signal handling** — `SIGINT`, a global pointer for the handler, graceful shutdown.
+8. **Command processing and response formatting** — RESP reply prefixes (`+` / `-` / `:` / `$` / `*`).
+9. **Singleton pattern** — the C++11 "Meyers singleton" using a function-local `static`, which is thread-safe for free.
+10. **Bitwise OR-assign (`|=`) on booleans** — useful pattern for "did *any* of these operations succeed?"
+11. **Modern C++ stdlib** — `std::chrono::steady_clock`, `std::atomic`, RAII everywhere.
 
 ### Classes
 
-- RedisServer class 
-
-- RedisDatabase class
-
-- RedisCommandHandler class
+- `RedisServer` — owns the listening socket, the accept loop, and signal handling.
+- `RedisDatabase` — the singleton in-memory store; owns the mutex and all three backing maps.
+- `RedisCommandHandler` — RESP parser plus the dispatch table that routes commands to handlers.
 
 ---
 
