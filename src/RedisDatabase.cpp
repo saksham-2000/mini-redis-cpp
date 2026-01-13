@@ -68,11 +68,14 @@ std::string RedisDatabase::type(const std::string& key) {
 bool RedisDatabase::del(const std::string& key) {
     std::lock_guard<std::mutex> lock(db_mutex);
     purgeExpired();
+    // A key can only live in one store, but we erase from all three defensively
+    // and OR the results so callers get a correct "did anything go away?" answer.
     bool erased = false;
     erased |= kv_store.erase(key) > 0;
     erased |= list_store.erase(key) > 0;
     erased |= hash_store.erase(key) > 0;
-    return false;
+    expiry_map.erase(key);
+    return erased;
 }
 
 bool RedisDatabase::expire(const std::string& key, int seconds) {
