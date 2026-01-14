@@ -267,8 +267,10 @@ bool RedisDatabase::lset(const std::string& key, int index, const std::string& v
 // Hash Operations
 bool RedisDatabase::hset(const std::string& key, const std::string& field, const std::string& value) {
     std::lock_guard<std::mutex> lock(db_mutex);
-    hash_store[key][field] = value;
-    return true;
+    auto& fields = hash_store[key];
+    const bool is_new = fields.find(field) == fields.end();
+    fields[field] = value;
+    return is_new;
 }
 
 bool RedisDatabase::hget(const std::string& key, const std::string& field, std::string& value) {

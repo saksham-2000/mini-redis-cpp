@@ -37,6 +37,8 @@ public:
     bool lset(const std::string& key, int index, const std::string& value);
 
     // Hash Operations
+    // Returns true if the field was newly added, false if it already existed
+    // (and was overwritten). Callers use this to count "new fields" for HSET.
     bool hset(const std::string& key, const std::string& field, const std::string& value);
     bool hget(const std::string& key, const std::string& field, std::string& value);
     bool hexists(const std::string& key, const std::string& field);

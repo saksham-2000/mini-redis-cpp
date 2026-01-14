@@ -239,11 +239,18 @@ static std::string handleLset(const std::vector<std::string>& tokens, RedisDatab
 }
 
 // Hash Operations
+// Real Redis: HSET key field value [field value ...] -> integer count of
+// *newly added* fields (existing fields are overwritten but not counted).
 static std::string handleHset(const std::vector<std::string>& tokens, RedisDatabase& db) {
-    if (tokens.size() < 4) 
-        return "-Error: HSET requires key, field and value\r\n";
-    db.hset(tokens[1], tokens[2], tokens[3]);
-    return ":1\r\n";
+    if (tokens.size() < 4 || (tokens.size() % 2) != 0)
+        return "-Error: HSET requires key followed by one or more field/value pairs\r\n";
+
+    int new_fields = 0;
+    for (size_t i = 2; i + 1 < tokens.size(); i += 2) {
+        if (db.hset(tokens[1], tokens[i], tokens[i + 1]))
+            ++new_fields;
+    }
+    return ":" + std::to_string(new_fields) + "\r\n";
 }
 
 static std::string handleHget(const std::vector<std::string>& tokens, RedisDatabase& db) {
