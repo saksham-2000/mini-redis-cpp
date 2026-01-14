@@ -324,77 +324,59 @@ static std::string handleHmset(const std::vector<std::string>& tokens, RedisData
     return "+OK\r\n";
 }
 
-RedisCommandHandler::RedisCommandHandler() {}
+// Adding a new command is now a one-liner in this table. Lookups are O(1),
+// and all the per-command validation stays inside its own handler function.
+RedisCommandHandler::RedisCommandHandler()
+    : dispatch_table{
+          // Connection / server
+          {"PING",     &handlePing},
+          {"ECHO",     &handleEcho},
+          {"FLUSHALL", &handleFlushAll},
+
+          // Keys
+          {"SET",      &handleSet},
+          {"GET",      &handleGet},
+          {"KEYS",     &handleKeys},
+          {"TYPE",     &handleType},
+          {"DEL",      &handleDel},
+          {"UNLINK",   &handleDel},   // UNLINK is DEL's non-blocking alias
+          {"EXPIRE",   &handleExpire},
+          {"RENAME",   &handleRename},
+
+          // Lists
+          {"LGET",     &handleLget},
+          {"LLEN",     &handleLlen},
+          {"LPUSH",    &handleLpush},
+          {"RPUSH",    &handleRpush},
+          {"LPOP",     &handleLpop},
+          {"RPOP",     &handleRpop},
+          {"LREM",     &handleLrem},
+          {"LINDEX",   &handleLindex},
+          {"LSET",     &handleLset},
+
+          // Hashes
+          {"HSET",     &handleHset},
+          {"HGET",     &handleHget},
+          {"HEXISTS",  &handleHexists},
+          {"HDEL",     &handleHdel},
+          {"HGETALL",  &handleHgetall},
+          {"HKEYS",    &handleHkeys},
+          {"HVALS",    &handleHvals},
+          {"HLEN",     &handleHlen},
+          {"HMSET",    &handleHmset},
+      } {}
 
 std::string RedisCommandHandler::processCommand(const std::string& commandLine) {
-    // Use RESP parser
     auto tokens = parseRespCommand(commandLine);
     if (tokens.empty()) return "-Error: Empty command\r\n";
 
+    // Redis command names are case-insensitive on the wire.
     std::string cmd = tokens[0];
     std::transform(cmd.begin(), cmd.end(), cmd.begin(), ::toupper);
-    RedisDatabase& db = RedisDatabase::getInstance();
 
-    // Common Commands
-    if (cmd == "PING")
-        return handlePing(tokens, db);
-    else if (cmd == "ECHO")
-        return handleEcho(tokens, db);
-    else if (cmd == "FLUSHALL")
-        return handleFlushAll(tokens, db);
-    // Key/Value Operations
-    else if (cmd == "SET")
-        return handleSet(tokens, db);
-    else if (cmd == "GET")
-        return handleGet(tokens, db);
-    else if (cmd == "KEYS")
-        return handleKeys(tokens, db);
-    else if (cmd == "TYPE")
-        return handleType(tokens, db);
-    else if (cmd == "DEL" || cmd == "UNLINK")
-        return handleDel(tokens, db);
-    else if (cmd == "EXPIRE")
-        return handleExpire(tokens, db);
-    else if (cmd == "RENAME")
-        return handleRename(tokens, db);
-    // List Operations
-    else if (cmd == "LGET") 
-        return handleLget(tokens, db);
-    else if (cmd == "LLEN") 
-        return handleLlen(tokens, db);
-    else if (cmd == "LPUSH")
-        return handleLpush(tokens, db);
-    else if (cmd == "RPUSH")
-        return handleRpush(tokens, db);
-    else if (cmd == "LPOP")
-        return handleLpop(tokens, db);
-    else if (cmd == "RPOP")
-        return handleRpop(tokens, db);
-    else if (cmd == "LREM")
-        return handleLrem(tokens, db);
-    else if (cmd == "LINDEX")
-        return handleLindex(tokens, db);
-    else if (cmd == "LSET")
-        return handleLset(tokens, db);
-    // Hash Operations
-    else if (cmd == "HSET") 
-        return handleHset(tokens, db);
-    else if (cmd == "HGET") 
-        return handleHget(tokens, db);
-    else if (cmd == "HEXISTS") 
-        return handleHexists(tokens, db);
-    else if (cmd == "HDEL") 
-        return handleHdel(tokens, db);
-    else if (cmd == "HGETALL") 
-        return handleHgetall(tokens, db);
-    else if (cmd == "HKEYS") 
-        return handleHkeys(tokens, db);
-    else if (cmd == "HVALS") 
-        return handleHvals(tokens, db);
-    else if (cmd == "HLEN") 
-        return handleHlen(tokens, db);
-    else if (cmd == "HMSET") 
-        return handleHmset(tokens, db);
-    else 
-        return "-Error: Unknown command\r\n";
+    auto it = dispatch_table.find(cmd);
+    if (it == dispatch_table.end())
+        return "-Error: Unknown command '" + cmd + "'\r\n";
+
+    return it->second(tokens, RedisDatabase::getInstance());
 }
