@@ -8,6 +8,18 @@
 
 class RedisDatabase;
 
+/**
+ * RedisCommandHandler
+ *
+ * Turns a raw byte buffer from the wire into a parsed RESP array, routes
+ * the command to its handler via an O(1) dispatch table, and returns a
+ * RESP-formatted reply string. Stateless across calls; safe to share a
+ * single instance across all client threads.
+ *
+ * Adding a new command is two steps:
+ *   1. Write a `static std::string handleFoo(...)` at file scope.
+ *   2. Add a `{"FOO", &handleFoo}` entry to dispatch_table.
+ */
 class RedisCommandHandler {
 public:
     RedisCommandHandler();

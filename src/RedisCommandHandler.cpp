@@ -1,38 +1,43 @@
 #include "../include/RedisCommandHandler.h"
 #include "../include/RedisDatabase.h"
 
-#include <vector>
-#include <sstream>
 #include <algorithm>
 #include <exception>
-#include <iostream> // debug
+#include <sstream>
+#include <vector>
 
-// RESP parser:
-// *2\r\n$4\r\n\PING\r\n$4\r\nTEST\r\n
-// *2 -> array has 2 elements
-// $4 -> next string has 4 characters
-// PING
-// TEST
-
-std::vector<std::string> parseRespCommand(const std::string &input) {
+// ---------------------------------------------------------------------------
+// RESP parser
+// ---------------------------------------------------------------------------
+// Two input shapes to handle:
+//
+//   1. Array form (what real clients send):
+//        *2\r\n$4\r\nPING\r\n$4\r\nTEST\r\n
+//        ^    ^              ^
+//        |    |              +-- 4-byte bulk string "TEST"
+//        |    +----------------- 4-byte bulk string "PING"
+//        +---------------------- array of 2 elements
+//
+//   2. Inline form (netcat/telnet):  whitespace-separated tokens on one line.
+//
+// We peek at the first byte to choose the path. Every length prefix is
+// bounds-checked; a malformed frame returns whatever tokens we've managed
+// to parse so far rather than throwing.
+std::vector<std::string> parseRespCommand(const std::string& input) {
     std::vector<std::string> tokens;
     if (input.empty()) return tokens;
 
-    // If it doesnt strart with '*', fallback to splitting by whitespace.
-    if (input[0] != '*') { 
+    // Inline fallback.
+    if (input[0] != '*') {
         std::istringstream iss(input);
         std::string token;
-        while (iss >> token) 
+        while (iss >> token)
             tokens.push_back(token);
         return tokens;
     }
 
-    size_t pos = 0;
-    // Expect '*' followed by number of elements
-    if (input[pos] != '*') return tokens;
-    pos++; // skip '*'
-
-    // crlf = Carriage Return (\r), Line Feed (\n)
+    // Array form: "*<n>\r\n" header, then <n> bulk strings.
+    size_t pos = 1;  // skip '*'
     size_t crlf = input.find("\r\n", pos);
     if (crlf == std::string::npos) return tokens;
 
@@ -40,8 +45,8 @@ std::vector<std::string> parseRespCommand(const std::string &input) {
     pos = crlf + 2;
 
     for (int i = 0; i < numElements; i++) {
-        if (pos >= input.size() || input[pos] != '$') break; // format error
-        pos++; // skip '$'
+        if (pos >= input.size() || input[pos] != '$') break;
+        pos++;  // skip '$'
 
         crlf = input.find("\r\n", pos);
         if (crlf == std::string::npos) break;
@@ -49,9 +54,8 @@ std::vector<std::string> parseRespCommand(const std::string &input) {
         pos = crlf + 2;
 
         if (pos + len > input.size()) break;
-        std::string token = input.substr(pos, len);
-        tokens.push_back(token);
-        pos += len + 2; // skip token and CRLF
+        tokens.emplace_back(input.substr(pos, len));
+        pos += len + 2;  // payload + trailing CRLF
     }
     return tokens;
 }

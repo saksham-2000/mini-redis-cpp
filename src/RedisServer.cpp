@@ -2,19 +2,20 @@
 #include "../include/RedisCommandHandler.h"
 #include "../include/RedisDatabase.h"
 
-#include <iostream>
-#include <sys/socket.h>
-#include <unistd.h>
-#include <netinet/in.h>
-#include <vector>
-#include <thread>
 #include <cstring>
+#include <iostream>
+#include <netinet/in.h>
 #include <signal.h>
+#include <sys/socket.h>
+#include <thread>
+#include <unistd.h>
+#include <vector>
 
-// Global pointer for signal handling
+// POSIX signal handlers are plain C callbacks and can't capture state, so we
+// stash a pointer to the live server here. Only one server per process.
 static RedisServer* globalServer = nullptr;
 
-void signalHandler(int signum) {
+static void signalHandler(int signum) {
     if (globalServer) {
         std::cout << "\nCaught signal " << signum << ", shutting down...\n";
         globalServer->shutdown();
@@ -34,10 +35,10 @@ RedisServer::RedisServer(int port) : port(port), server_socket(-1), running(true
 void RedisServer::shutdown() {
     running = false;
     if (server_socket != -1) {
-        // Before shutdown, persist the database
+        // Snapshot before we go so nothing the user just typed is lost.
         if (RedisDatabase::getInstance().dump("dump.my_rdb"))
             std::cout << "Database Dumped to dump.my_rdb\n";
-        else 
+        else
             std::cerr << "Error dumping database\n";
         close(server_socket);
     }
@@ -74,20 +75,22 @@ void RedisServer::run() {
     std::vector<std::thread> threads;
     RedisCommandHandler cmdHandler;
 
+    // Main accept loop. Each client gets its own std::thread that runs a
+    // tight recv -> dispatch -> send cycle until the peer hangs up.
     while (running) {
         int client_socket = accept(server_socket, nullptr, nullptr);
         if (client_socket < 0) {
-            if (running) 
+            if (running)
                 std::cerr << "Error Accepting Client Connection\n";
             break;
         }
 
-        threads.emplace_back([client_socket, &cmdHandler](){
+        threads.emplace_back([client_socket, &cmdHandler]() {
             char buffer[1024];
             while (true) {
-                memset(buffer, 0, sizeof(buffer));
+                std::memset(buffer, 0, sizeof(buffer));
                 int bytes = recv(client_socket, buffer, sizeof(buffer) - 1, 0);
-                if (bytes <= 0) break;
+                if (bytes <= 0) break;  // peer closed or error
                 std::string request(buffer, bytes);
                 std::string response = cmdHandler.processCommand(request);
                 send(client_socket, response.c_str(), response.size(), 0);
@@ -95,14 +98,15 @@ void RedisServer::run() {
             close(client_socket);
         });
     }
-    
+
     for (auto& t : threads) {
         if (t.joinable()) t.join();
     }
 
-    // Before shutdown, persist the database
+    // Final snapshot in case we got here via the accept-loop exit path
+    // rather than through the signal handler.
     if (RedisDatabase::getInstance().dump("dump.my_rdb"))
         std::cout << "Database Dumped to dump.my_rdb\n";
-    else 
+    else
         std::cerr << "Error dumping database\n";
 }

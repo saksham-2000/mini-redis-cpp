@@ -1,17 +1,21 @@
 #include "../include/RedisDatabase.h"
 
-#include <fstream>
-#include <sstream>
 #include <algorithm>
+#include <fstream>
 #include <iterator>
+#include <sstream>
 
-// Singleton accessor
+// Meyers singleton: the function-local static is constructed on first call,
+// destroyed at program exit, and C++11 guarantees the initialization is
+// thread-safe (the so-called "magic statics").
 RedisDatabase& RedisDatabase::getInstance() {
     static RedisDatabase instance;
     return instance;
 }
 
-// Common Comands
+// ---------------------------------------------------------------------------
+// Connection / server-level
+// ---------------------------------------------------------------------------
 bool RedisDatabase::flushAll() {
     std::lock_guard<std::mutex> lock(db_mutex);
     kv_store.clear();
@@ -20,7 +24,9 @@ bool RedisDatabase::flushAll() {
     return true;
 }
 
-// Key/Value Operations
+// ---------------------------------------------------------------------------
+// Strings (key/value)
+// ---------------------------------------------------------------------------
 void RedisDatabase::set(const std::string& key, const std::string& value) {
     std::lock_guard<std::mutex> lock(db_mutex);
     kv_store[key] = value;
@@ -91,11 +97,13 @@ bool RedisDatabase::expire(const std::string& key, int seconds) {
     return true;
 }
 
+// Sweeps every pending deadline and evicts anything past due. Called from
+// any read-ish operation while the mutex is held, which is the whole point
+// of "lazy" expiration - we never run a timer thread.
 void RedisDatabase::purgeExpired() {
     auto now = std::chrono::steady_clock::now();
     for (auto it = expiry_map.begin(); it != expiry_map.end(); ) {
         if (now > it->second) {
-            // Remove from all stores
             kv_store.erase(it->first);
             list_store.erase(it->first);
             hash_store.erase(it->first);
@@ -141,7 +149,9 @@ bool RedisDatabase::rename(const std::string& oldKey, const std::string& newKey)
     return found;
 }
 
-// List Opreations
+// ---------------------------------------------------------------------------
+// Lists
+// ---------------------------------------------------------------------------
 std::vector<std::string> RedisDatabase::lget(const std::string& key) {
     std::lock_guard<std::mutex> lock(db_mutex);
     auto it = list_store.find(key);
@@ -191,22 +201,24 @@ bool RedisDatabase::rpop(const std::string& key, std::string& value) {
     return false;
 }
 
+// LREM semantics mirror real Redis:
+//   count > 0  -> remove first `count` occurrences, head to tail.
+//   count < 0  -> remove last `|count|` occurrences, tail to head.
+//   count == 0 -> remove all occurrences (erase-remove idiom).
 int RedisDatabase::lrem(const std::string& key, int count, const std::string& value) {
     std::lock_guard<std::mutex> lock(db_mutex);
     int removed = 0;
     auto it = list_store.find(key);
-    if (it == list_store.end()) 
+    if (it == list_store.end())
         return 0;
 
     auto& lst = it->second;
 
     if (count == 0) {
-        // Remove all occurances
         auto new_end = std::remove(lst.begin(), lst.end(), value);
         removed = std::distance(new_end, lst.end());
         lst.erase(new_end, lst.end());
     } else if (count > 0) {
-        // Remove from head to tail
         for (auto iter = lst.begin(); iter != lst.end() && removed < count; ) {
             if (*iter == value) {
                 iter = lst.erase(iter);
@@ -216,7 +228,9 @@ int RedisDatabase::lrem(const std::string& key, int count, const std::string& va
             }
         }
     } else {
-        // Remove from tail to head (count is negative)
+        // Reverse walk: erase() takes a forward iterator, so we convert the
+        // reverse iterator via base()-1, erase, then rebuild the reverse
+        // iterator from the returned forward one. Classic reverse-erase dance.
         for (auto riter = lst.rbegin(); riter != lst.rend() && removed < (-count); ) {
             if (*riter == value) {
                 auto fwdIter = riter.base();
@@ -264,7 +278,9 @@ bool RedisDatabase::lset(const std::string& key, int index, const std::string& v
     return true;
 }
 
-// Hash Operations
+// ---------------------------------------------------------------------------
+// Hashes
+// ---------------------------------------------------------------------------
 bool RedisDatabase::hset(const std::string& key, const std::string& field, const std::string& value) {
     std::lock_guard<std::mutex> lock(db_mutex);
     auto& fields = hash_store[key];
@@ -345,16 +361,17 @@ bool RedisDatabase::hmset(const std::string& key, const std::vector<std::pair<st
     return true;
 }
 
-/*
-Very simple text based persistance: each line encodes a record
-
-Memory -> File - dump()
-File -> Memory - load()
-
-K = Key Value
-L = List
-H= Hash
-*/
+// ---------------------------------------------------------------------------
+// Persistence (very simple text snapshot)
+// ---------------------------------------------------------------------------
+// One record per line. First character is the type tag:
+//   K <key> <value>                           -> string
+//   L <key> <item1> <item2> ...               -> list
+//   H <key> <field1>:<value1> <field2>:...    -> hash
+//
+// Known sharp edge: whitespace- and colon-delimited, so any key or value
+// containing a space or ':' will round-trip incorrectly. Fine for a learning
+// project; a length-prefixed binary format is the right long-term fix.
 bool RedisDatabase::dump(const std::string& filename) {
     std::lock_guard<std::mutex> lock(db_mutex);
     std::ofstream ofs(filename, std::ios::binary);
@@ -378,28 +395,6 @@ bool RedisDatabase::dump(const std::string& filename) {
     return true;
 }
 
-/*
-Key-Value (K)
-kv_store["name"] = "Alice";
-kv_store["city"] = "Berlin";
-
-List (L)
-list_store["fruits"] = {"apple", "banana", "orange"};
-list_store["colors"] = {"red", "green", "blue"};
-
-Hash (H)
-hash_store["user:100"] = {
-    {"name", "Bob"},
-    {"age", "30"},
-    {"email", "bob@example.com"}
-};
-
-hash_store["user:200"] = {
-    {"name", "Eve"},
-    {"age", "25"},
-    {"email", "eve@example.com"}
-};
-*/
 bool RedisDatabase::load(const std::string& filename) {
     std::lock_guard<std::mutex> lock(db_mutex);
     std::ifstream ifs(filename, std::ios::binary);
