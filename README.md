@@ -1,4 +1,4 @@
-# my_redis_server
+# Mini Redis Server from Scratch
 
 A small, Redis-compatible in-memory data store I built from scratch in C++17 to learn how Redis actually works under the hood.
 
